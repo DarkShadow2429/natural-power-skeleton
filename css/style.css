@@ -1,0 +1,163 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
+
+:root {
+    --primary-green: #28a745;
+    --dark-green: #218838;
+    --dark-text: #343a40;
+    --light-gray: #f8f9fa;
+    --border-color: #dee2e6;
+}
+
+body {
+    font-family: 'Poppins', sans-serif;
+    color: var(--dark-text);
+    padding-top: 70px;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 700;
+}
+
+.section-title {
+    color: var(--dark-green);
+    font-weight: 700;
+    margin-bottom: 3rem;
+    text-align: center;
+}
+
+.btn-primary {
+    background-color: var(--primary-green);
+    border-color: var(--primary-green);
+    font-weight: 600;
+    transition: background-color 0.2s ease-in-out;
+}
+
+.btn-primary:hover {
+    background-color: var(--dark-green);
+    border-color: var(--dark-green);
+}
+
+.navbar {
+    transition: box-shadow 0.3s ease-in-out;
+}
+
+.navbar-brand {
+    font-weight: 700;
+}
+
+.hero-section {
+    background: linear-gradient(rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.4)), url('../imagenes/portada.png');
+    background-size: cover;
+    background-position: center;
+    color: white;
+    height: 80vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.hero-section h1 {
+    font-size: 3.5rem;
+}
+
+.card-product {
+    border: 1px solid var(--border-color);
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.card-product:hover {
+    transform: translateY(-10px);
+    box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+}
+
+.out-of-stock-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(255, 255, 255, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border-radius: .25rem;
+}
+
+footer {
+    background-color: #212529;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+footer a {
+    color: rgba(255, 255, 255, 0.7);
+    text-decoration: none;
+    transition: color 0.2s;
+}
+
+footer a:hover {
+    color: white;
+}
+
+.whatsapp-float {
+    position: fixed;
+    bottom: 25px;
+    right: 25px;
+    width: 60px;
+    height: 60px;
+    background-color: #25D366;
+    color: white;
+    border-radius: 50px;
+    text-align: center;
+    font-size: 28px;
+    box-shadow: 2px 2px 6px rgba(0,0,0,0.25);
+    z-index: 100;
+    transition: transform 0.2s ease-in-out;
+}
+
+.whatsapp-float:hover {
+    transform: scale(1.1);
+    color: white;
+}
+
+.whatsapp-float i {
+    margin-top: 16px;
+}
+/* --- Estilos para Notificaciones "Toast" --- */
+.toast-container {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 1055;
+}
+
+.toast-notification {
+    display: flex;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    background-color: #212529;
+    color: white;
+    border-radius: 0.25rem;
+    box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15);
+    margin-top: 1rem;
+    opacity: 0;
+    transform: translateX(100%);
+    transition: all 0.4s ease-in-out;
+}
+
+.toast-notification.show {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+.toast-notification.success {
+    background-color: #198754; /* Verde de éxito */
+}
+
+.toast-notification.error {
+    background-color: #dc3545; /* Rojo de error */
+}
+
+.toast-icon {
+    margin-right: 0.75rem;
+    font-size: 1.2rem;
+}
