@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Estructura de Página Web - US-08 (Simple)</title>
+    <!-- CSS de Bootstrap 5 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        /* Un poco de estilo para el fondo y el margen */
+        body {
+            background-color: #f8f9fa;
+            padding: 2rem;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container-fluid">
+        <div class="row justify-content-center">
+
+            <!-- ZONA ÚNICA DE 12 COLUMNAS: ESTRUCTURA DE LA PÁGINA WEB -->
+            <div class="col-12 col-md-10 col-lg-8">
+                
+                <!-- Usamos el componente "Card" de Bootstrap para simular la ventana -->
+                <div class="card shadow-sm">
+                    <!-- Este es el header gris de la ventana -->
+                    <div class="card-header bg-light">
+                        <!-- El header está vacío para que se vea limpio -->
+                    </div>
+                    
+                    <!-- Este es el cuerpo blanco de la ventana -->
+                    <div class="card-body p-4">
+                        <div class="row justify-content-center">
+                            <div class="col-md-10">
+                                
+                                <h5 class="card-title mb-4">Mi Carrito de Compras</h5>
+                                
+                                <!-- Estructura para la lista de productos en el carrito -->
+                                <ul class="list-group mb-3">
+                                    
+                                    <!-- Item 1 en el carrito -->
+                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <h6 class="my-0">Nombre del Producto 1</h6>
+                                            <small class="text-muted">Descripción breve</small>
+                                        </div>
+                                        <span class="text-muted">$Precio</span>
+                                    </li>
+
+                                    <!-- Item 2 en el carrito -->
+                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <h6 class="my-0">Nombre del Producto 2</h6>
+                                            <small class="text-muted">Descripción breve</small>
+                                        </div>
+                                        <span class="text-muted">$Precio</span>
+                                    </li>
+
+                                    <!-- Subtotal -->
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Subtotal</span>
+                                        <strong>$Total</strong>
+                                    </li>
+                                </ul>
+
+                                <button class="btn btn-secondary w-100 mt-3" disabled>Proceder al Pago</button>
+
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
