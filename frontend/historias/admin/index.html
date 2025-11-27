@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panel Admin - Natural Power</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="../../../static/css/style.css">
+</head>
+<body>
+  <div id="toast-container" class="toast-container"></div>
+
+  <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm fixed-top">
+    <div class="container">
+      <a class="navbar-brand text-success" href="/app/inicio/"><i class="bi bi-tree-fill me-2"></i><strong>Natural Power</strong></a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNavbar"><span class="navbar-toggler-icon"></span></button>
+      <div class="collapse navbar-collapse" id="mainNavbar">
+        <ul class="navbar-nav mx-auto mb-2 mb-lg-0">
+          <li class="nav-item"><a class="nav-link" href="/app/inicio/">Inicio</a></li>
+          <li class="nav-item"><a class="nav-link" href="/app/catalogo/">Catálogo</a></li>
+          <li class="nav-item"><a class="nav-link" href="/app/crea-tu-jugo/">Crea tu Jugo</a></li>
+          <li class="nav-item"><a class="nav-link active" aria-current="page" href="/app/admin/">Admin</a></li>
+        </ul>
+        <div class="d-flex align-items-center">
+          <div id="guest-actions" class="d-flex">
+            <button class="btn btn-outline-secondary me-2" data-bs-toggle="modal" data-bs-target="#loginModal">Iniciar Sesión</button>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#registerModal">Registrarse</button>
+          </div>
+          <div id="user-actions" class="d-flex align-items-center" style="display: none;">
+            <div class="nav-item dropdown">
+              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown"><i class="bi bi-person-circle me-1"></i> <span id="user-dropdown-name"></span></a>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="/app/cuenta/">Mi Cuenta</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><button class="dropdown-item" onclick="logout()">Cerrar Sesión</button></li>
+              </ul>
+            </div>
+          </div>
+          <a href="/app/carrito/" class="btn btn-link text-dark ms-2 position-relative fs-5">
+            <i class="bi bi-cart"></i>
+            <span id="cart-counter" class="badge bg-danger rounded-pill position-absolute top-0 start-100 translate-middle" style="font-size: 0.6rem;"></span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container" style="padding-top: 90px;">
+    <ul class="nav nav-pills mb-3" id="adminTabs">
+      <li class="nav-item"><button class="nav-link active" data-tab="productos">Productos</button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="usuarios">Usuarios</button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="dashboard">Dashboard</button></li>
+    </ul>
+
+    <!-- Sección: Productos -->
+    <section id="secProductos">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="section-title m-0">Administración de Productos</h2>
+        <div>
+          <button class="btn btn-outline-secondary me-2" id="btnRefrescarProd"><i class="bi bi-arrow-repeat"></i></button>
+          <button class="btn btn-primary" id="btnCrear"><i class="bi bi-plus"></i> Nuevo Producto</button>
+        </div>
+      </div>
+
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table align-middle">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Nombre</th>
+                  <th>Precio</th>
+                  <th>Stock</th>
+                  <th>Tipo</th>
+                  <th>Imagen</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="tblProductos">
+                <tr><td colspan="7" class="text-center text-muted">Cargando...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Sección: Usuarios -->
+    <section id="secUsuarios" style="display:none;">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="section-title m-0">Usuarios</h2>
+        <button class="btn btn-outline-secondary" id="btnRefrescarUsuarios"><i class="bi bi-arrow-repeat"></i></button>
+      </div>
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table align-middle">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Nombre</th>
+                  <th>Email</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody id="tblUsuarios">
+                <tr><td colspan="4" class="text-center text-muted">Cargando...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Sección: Dashboard -->
+    <section id="secDashboard" style="display:none;">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="section-title m-0">Dashboard</h2>
+        <button class="btn btn-outline-secondary" id="btnRefrescarDashboard"><i class="bi bi-arrow-repeat"></i></button>
+      </div>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="card shadow-sm text-center">
+            <div class="card-body">
+              <div class="text-muted">Ingresos</div>
+              <div class="fs-3 fw-bold" id="dbRevenue">$0</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card shadow-sm text-center">
+            <div class="card-body">
+              <div class="text-muted">Pedidos</div>
+              <div class="fs-3 fw-bold" id="dbOrders">0</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card shadow-sm text-center">
+            <div class="card-body">
+              <div class="text-muted">Usuarios</div>
+              <div class="fs-3 fw-bold" id="dbUsers">0</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal Crear/Editar -->
+  <div class="modal fade" id="modalProducto" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="modalTitle">Producto</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <form id="frmProducto">
+            <input type="hidden" id="prodId">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label">Nombre</label>
+                <input class="form-control" id="prodNombre" required>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">Precio</label>
+                <input type="number" step="0.01" class="form-control" id="prodPrecio" required>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">Stock</label>
+                <input type="number" class="form-control" id="prodStock" required>
+              </div>
+              <div class="col-md-12">
+                <label class="form-label">Descripción</label>
+                <textarea class="form-control" id="prodDesc" rows="2"></textarea>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Tipo</label>
+                <input class="form-control" id="prodTipo">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">URL Imagen</label>
+                <input class="form-control" id="prodImg" placeholder="/static/imagenes/jugo_tropical.png">
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button class="btn btn-primary" id="btnGuardar">Guardar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="../../../static/js/config.js"></script>
+  <script src="../../../static/js/auth.js"></script>
+  <script>
+    // Helpers UI
+    function toast(msg, tipo='info') {
+      const cont = document.getElementById('toast-container');
+      const div = document.createElement('div');
+      div.className = `alert alert-${tipo==='error'?'danger':tipo} alert-dismissible fade show`;
+      div.innerHTML = `${msg}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+      cont.appendChild(div);
+      setTimeout(()=>div.remove(), 4000);
+    }
+
+    function requireAdmin() {
+      return obtenerDatosUsuario().then(u => {
+        if (!u || !u.es_admin) {
+          toast('Acceso restringido para administradores', 'error');
+          setTimeout(()=>{ window.location.href = '/app/inicio/'; }, 1200);
+          return false;
+        }
+        return true;
+      });
+    }
+
+    async function loadProductos() {
+      try {
+        const body = await apiCall('/api/admin/productos', 'GET');
+        const tbody = document.getElementById('tblProductos');
+        tbody.innerHTML = '';
+        if (!Array.isArray(body) || body.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Sin productos</td></tr>';
+          return;
+        }
+        for (const p of body) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${p.id}</td>
+            <td>${p.nombre}</td>
+            <td>$${(p.precio||0).toLocaleString('es-CL')}</td>
+            <td>${p.stock ?? 0}</td>
+            <td>${p.tipo ?? ''}</td>
+            <td><img src="${p.image || ''}" alt="img" style="width:48px;height:48px;object-fit:cover;border-radius:6px;"></td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-outline-primary me-2" onclick='openEdit(${JSON.stringify(p).replace(/"/g,"&quot;")})'>Editar</button>
+              <button class="btn btn-sm btn-outline-danger" onclick='delProd(${p.id})'>Eliminar</button>
+            </td>`;
+          document.getElementById('tblProductos').appendChild(tr);
+        }
+      } catch (e) {
+        toast('Error cargando productos: ' + e.message, 'error');
+      }
+    }
+
+    function clearForm(){
+      document.getElementById('prodId').value='';
+      document.getElementById('prodNombre').value='';
+      document.getElementById('prodPrecio').value='';
+      document.getElementById('prodStock').value='';
+      document.getElementById('prodDesc').value='';
+      document.getElementById('prodTipo').value='';
+      document.getElementById('prodImg').value='';
+    }
+
+    function fillForm(p){
+      document.getElementById('prodId').value=p.id||'';
+      document.getElementById('prodNombre').value=p.nombre||'';
+      document.getElementById('prodPrecio').value=p.precio||'';
+      document.getElementById('prodStock').value=p.stock||0;
+      document.getElementById('prodDesc').value=p.descripcion||'';
+      document.getElementById('prodTipo').value=p.tipo||'';
+      document.getElementById('prodImg').value=p.image||'';
+    }
+
+    function openCreate(){
+      clearForm();
+      document.getElementById('modalTitle').textContent='Nuevo Producto';
+      const modal = new bootstrap.Modal(document.getElementById('modalProducto'));
+      modal.show();
+    }
+
+    function openEdit(p){
+      clearForm();
+      fillForm(p);
+      document.getElementById('modalTitle').textContent='Editar Producto';
+      const modal = new bootstrap.Modal(document.getElementById('modalProducto'));
+      modal.show();
+    }
+
+    async function saveCurrent(){
+      const id = document.getElementById('prodId').value;
+      const payload = {
+        nombre: document.getElementById('prodNombre').value,
+        precio: parseFloat(document.getElementById('prodPrecio').value),
+        stock: parseInt(document.getElementById('prodStock').value || '0'),
+        descripcion: document.getElementById('prodDesc').value || null,
+        tipo: document.getElementById('prodTipo').value || null,
+        image: document.getElementById('prodImg').value || null
+      };
+
+      try {
+        if (id) {
+          await apiCall(`/api/admin/productos/${id}`, 'PUT', payload);
+          toast('Producto actualizado', 'success');
+        } else {
+          // Para crear, algunos campos son obligatorios (precio, stock, nombre)
+          await apiCall('/api/admin/productos', 'POST', {
+            nombre: payload.nombre,
+            descripcion: payload.descripcion,
+            precio: payload.precio,
+            image: payload.image || '/static/imagenes/jugo_tropical.png',
+            stock: payload.stock,
+            tipo: payload.tipo
+          });
+          toast('Producto creado', 'success');
+        }
+        const m = bootstrap.Modal.getInstance(document.getElementById('modalProducto'));
+        if (m) m.hide();
+        await loadProductos();
+      } catch(e) {
+        toast('Error guardando: ' + e.message, 'error');
+      }
+    }
+
+    async function delProd(id){
+      if (!confirm('¿Eliminar producto #' + id + '?')) return;
+      try {
+        await apiCall(`/api/admin/productos/${id}`, 'DELETE');
+        toast('Producto eliminado', 'success');
+        await loadProductos();
+      } catch(e) {
+        toast('Error eliminando: ' + e.message, 'error');
+      }
+    }
+
+    // Usuarios
+    async function loadUsuarios(){
+      try {
+        const body = await apiCall('/api/admin/usuarios', 'GET');
+        const tbody = document.getElementById('tblUsuarios');
+        tbody.innerHTML = '';
+        if (!Array.isArray(body) || body.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Sin usuarios</td></tr>';
+          return;
+        }
+        for (const u of body) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${u.id}</td>
+            <td>${u.nombre}</td>
+            <td>${u.email}</td>
+            <td>${u.status || 'Activo'}</td>`;
+          tbody.appendChild(tr);
+        }
+      } catch (e) {
+        toast('Error cargando usuarios: ' + e.message, 'error');
+      }
+    }
+
+    // Dashboard
+    async function loadDashboard(){
+      try {
+        const d = await apiCall('/api/admin/dashboard', 'GET');
+        document.getElementById('dbRevenue').textContent = `$${(d.revenue||0).toLocaleString('es-CL')}`;
+        document.getElementById('dbOrders').textContent = d.orders || 0;
+        document.getElementById('dbUsers').textContent = d.newUsers || 0;
+      } catch (e) {
+        toast('Error cargando dashboard: ' + e.message, 'error');
+      }
+    }
+
+    // Tabs
+    function showTab(tab){
+      const secMap = { productos:'secProductos', usuarios:'secUsuarios', dashboard:'secDashboard' };
+      for (const k of Object.keys(secMap)){
+        const el = document.getElementById(secMap[k]);
+        if (el) el.style.display = (k===tab)?'block':'none';
+      }
+      // activar botón
+      document.querySelectorAll('#adminTabs .nav-link').forEach(btn=>{
+        btn.classList.toggle('active', btn.getAttribute('data-tab')===tab);
+      });
+      // cargar datos de la pestaña
+      if (tab==='productos') loadProductos();
+      if (tab==='usuarios') loadUsuarios();
+      if (tab==='dashboard') loadDashboard();
+    }
+
+    // Exponer handlers usados en onclick
+    window.openEdit = openEdit;
+    window.delProd = delProd;
+
+    document.addEventListener('DOMContentLoaded', async ()=>{
+      // Requiere auth y admin
+      if (!estaAutenticado()) {
+        toast('Inicia sesión para continuar', 'error');
+        setTimeout(()=>window.location.href='/app/inicio/', 1200);
+        return;
+      }
+      const ok = await requireAdmin();
+      if (!ok) return;
+      // Listeners productos
+      document.getElementById('btnCrear').addEventListener('click', openCreate);
+      document.getElementById('btnGuardar').addEventListener('click', saveCurrent);
+      document.getElementById('btnRefrescarProd').addEventListener('click', loadProductos);
+      // Listeners usuarios/dashboard
+      document.getElementById('btnRefrescarUsuarios').addEventListener('click', loadUsuarios);
+      document.getElementById('btnRefrescarDashboard').addEventListener('click', loadDashboard);
+      // Tabs events
+      document.querySelectorAll('#adminTabs .nav-link').forEach(btn=>{
+        btn.addEventListener('click', ()=> showTab(btn.getAttribute('data-tab')));
+      });
+      // Mostrar pestaña por defecto
+      showTab('productos');
+    });
+  </script>
+</body>
+</html>
