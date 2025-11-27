@@ -69,6 +69,23 @@
                             </div>
                             <small id="coupon-code-applied" class="text-success fw-bold mt-2 d-block"></small>
                         </div>
+
+                        <!-- Sección de Puntos -->
+                        <div class="mb-3" id="points-section" style="display: none;">
+                            <label class="form-label d-flex justify-content-between align-items-center">
+                                <span>Mis Puntos Natural Power</span>
+                                <span class="badge bg-warning text-dark" id="user-points-badge">0 pts</span>
+                            </label>
+                            <div class="card bg-light border-warning mb-2">
+                                <div class="card-body p-2">
+                                    <small class="text-muted d-block mb-2">1 punto = $100 de descuento</small>
+                                    <button class="btn btn-outline-warning w-100 text-dark" onclick="redeemPoints()">
+                                        <i class="bi bi-star-fill me-1"></i> Canjear Puntos
+                                    </button>
+                                </div>
+                            </div>
+                            <small id="points-applied-msg" class="text-success fw-bold mt-1 d-block"></small>
+                        </div>
                         
                         <ul class="list-group list-group-flush">
                             <li class="list-group-item d-flex justify-content-between">
@@ -144,6 +161,7 @@
             }
             renderCartItems(items);
             updateCartSummary(items);
+            checkPoints();
         }
 
         function renderCartItems(items) {
@@ -249,9 +267,10 @@
                     body: JSON.stringify({ codigo: code })
                 });
 
-                const data = await response.json();
+                const jsonResponse = await response.json();
+                const data = jsonResponse.body;
                 
-                if (response.ok) {
+                if (response.ok && data) {
                     const discountRow = document.getElementById('discount-row');
                     const discountAmount = document.getElementById('discount-amount');
                     const total = document.getElementById('total');
@@ -264,11 +283,63 @@
                     
                     mostrarNotificacion('Cupón aplicado exitosamente', 'success');
                 } else {
-                    mostrarNotificacion(data.error || 'Cupón inválido', 'error');
+                    const errorMsg = (data && data.error) || jsonResponse.error || 'Cupón inválido';
+                    mostrarNotificacion(errorMsg, 'error');
                 }
             } catch (error) {
                 console.error('Error al aplicar cupón:', error);
                 mostrarNotificacion('Error al aplicar cupón', 'error');
+            }
+        }
+
+        async function checkPoints() {
+            const token = localStorage.getItem('auth_token');
+            if (!token) return;
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/usuarios/me/puntos`, {
+                    headers: { 'Authorization': token }
+                });
+                const json = await response.json();
+                if (response.ok && json.body && json.body.puntos > 0) {
+                    document.getElementById('points-section').style.display = 'block';
+                    document.getElementById('user-points-badge').textContent = `${json.body.puntos} pts`;
+                }
+            } catch (e) { console.error("Error checking points:", e); }
+        }
+
+        async function redeemPoints() {
+            const token = localStorage.getItem('auth_token');
+            if (!token) {
+                mostrarNotificacion('Debes iniciar sesión para canjear puntos', 'error');
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/usuarios/me/puntos/canjear`, {
+                    method: 'POST',
+                    headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({}) 
+                });
+                const json = await response.json();
+                const data = json.body;
+                
+                if (response.ok && data) {
+                    const discountRow = document.getElementById('discount-row');
+                    const discountAmount = document.getElementById('discount-amount');
+                    const total = document.getElementById('total');
+                    const msg = document.getElementById('points-applied-msg');
+                    
+                    discountRow.style.display = 'flex';
+                    discountAmount.textContent = `-$${data.descuento.toLocaleString()}`;
+                    total.textContent = `$${data.total_nuevo.toLocaleString()}`;
+                    msg.textContent = `¡Canjeados ${data.puntos_usados} pts por $${data.descuento.toLocaleString()} de descuento!`;
+                    
+                    mostrarNotificacion('Puntos aplicados correctamente', 'success');
+                } else {
+                    mostrarNotificacion(data.error || 'No se pudieron canjear los puntos', 'error');
+                }
+            } catch (e) { 
+                console.error(e); 
+                mostrarNotificacion('Error al conectar con el sistema de puntos', 'error');
             }
         }
     </script>

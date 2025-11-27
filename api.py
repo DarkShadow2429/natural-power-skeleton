@@ -4,6 +4,7 @@
 import uvicorn
 import os
 from fastapi import FastAPI, Path, Body, Query, status, Depends, Header, HTTPException
+from fastapi import BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -25,6 +26,12 @@ try:
 except Exception:
     mercadopago = None  # type: ignore
     MP_AVAILABLE = False
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+    REPORTLAB_AVAILABLE = True
+except Exception:
+    REPORTLAB_AVAILABLE = False
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -247,7 +254,26 @@ def crear_preferencia_mp(pref: MPPreferenceInput, authorization: Optional[str] =
         user_email = extraer_email_del_header(authorization)
         total = sum([float(it.unit_price) * int(it.quantity) for it in pref.items])
         with Session(engine) as session:
-            order = Order(user_email=user_email, total=total)
+            discount_total = 0.0
+            coupon_code = None
+            # Intentar aplicar cupón si viene en metadata
+            try:
+                meta_code = None
+                if isinstance(pref.metadata, dict):
+                    meta_code = (pref.metadata.get("coupon_code") or "").strip().upper() or None
+                if meta_code:
+                    cup = session.exec(select(Coupon).where(Coupon.codigo == meta_code, Coupon.activo == True)).first()
+                    if cup and (not cup.expira or cup.expira >= datetime.now(timezone.utc)) and (not cup.max_uses or cup.used_count < cup.max_uses):
+                        if cup.descuento_porcentaje:
+                            discount_total += (total * float(cup.descuento_porcentaje) / 100.0)
+                        if cup.descuento_fijo:
+                            discount_total += float(cup.descuento_fijo)
+                        discount_total = min(discount_total, total)
+                        coupon_code = meta_code
+            except Exception:
+                pass
+
+            order = Order(user_email=user_email, total=max(0.0, total - discount_total), discount_total=discount_total, coupon_code=coupon_code)
             session.add(order)
             session.commit()
             session.refresh(order)
@@ -257,13 +283,22 @@ def crear_preferencia_mp(pref: MPPreferenceInput, authorization: Optional[str] =
                 session.add(oi)
             session.commit()
 
-        # 2) Armar items para la preferencia
+        # 2) Armar items para la preferencia (aplicar descuento proporcional si existe)
         items = []
+        try:
+            if discount_total and total > 0:
+                factor = max(0.0, (total - discount_total) / total)
+            else:
+                factor = 1.0
+        except Exception:
+            factor = 1.0
         for it in pref.items:
+            unit = float(it.unit_price)
+            unit_discounted = round(unit * factor, 2)
             items.append({
                 "title": it.title,
                 "quantity": int(it.quantity),
-                "unit_price": float(it.unit_price),
+                "unit_price": unit_discounted,
                 "currency_id": it.currency_id or 'CLP',
                 **({"picture_url": it.picture_url} if it.picture_url else {})
             })
@@ -322,6 +357,17 @@ async def mp_webhook(payload: Dict[str, Any] = Body(default_factory=dict)):
             with Session(engine) as session:
                 order = session.get(Order, int(order_id))
                 if order:
+                    # Marcar estado pagado y registrar uso de cupón
+                    try:
+                        order.status = "Pagado"
+                        if order.coupon_code:
+                            cup = session.exec(select(Coupon).where(Coupon.codigo == order.coupon_code)).first()
+                            if cup:
+                                cup.used_count = int(cup.used_count or 0) + 1
+                                session.add(cup)
+                        session.add(order)
+                    except Exception:
+                        pass
                     # Registrar actividad y actualizar vendidos a partir de OrderItem
                     items = session.exec(select(OrderItem).where(OrderItem.order_id == order.id)).all()
                     for it in items:
@@ -377,6 +423,10 @@ class CarritoItemInput(BaseModel):
     productoId: int
     cantidad: int
     personalizacion: Optional[Dict[str, Any]] = None
+
+class CarritoUpdateInput(BaseModel):
+    cantidad: int
+    productoId: Optional[int] = None
 
 class CuponInput(BaseModel):
     codigo: str
@@ -447,6 +497,10 @@ class Order(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_email: Optional[str] = None
     total: float = 0.0
+    discount_total: float = 0.0
+    coupon_code: Optional[str] = None
+    status: str = "Creado"
+    points_earned: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -489,6 +543,34 @@ class PasswordResetToken(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class Coupon(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    codigo: str
+    descuento_porcentaje: Optional[int] = None  # 0-100
+    descuento_fijo: Optional[float] = None
+    expira: Optional[datetime] = None
+    max_uses: Optional[int] = None
+    used_count: int = 0
+    activo: bool = True
+
+
+class CouponRedemption(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    codigo: str
+    user_email: Optional[str] = None
+    order_id: Optional[int] = None
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class LoyaltyPoint(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_email: str
+    puntos: int
+    motivo: Optional[str] = None
+    pedido_id: Optional[int] = None
+    fecha: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 # Crear tablas y datos semilla
 def create_db_and_seed():
     SQLModel.metadata.create_all(engine)
@@ -503,6 +585,12 @@ def create_db_and_seed():
                 Product(nombre="Amanecer Tropical", descripcion="Dulzura natural", precio=4500, image="/static/imagenes/jugo_tropical.png", stock=15, tipo="energia"),
             ]
             session.add_all(sample)
+            session.commit()
+        # Semilla de cupón básico si no existe
+        existing_coupon = session.exec(select(Coupon).where(Coupon.codigo == "NATURAL10")).first()
+        if not existing_coupon:
+            c = Coupon(codigo="NATURAL10", descuento_porcentaje=10, activo=True)
+            session.add(c)
             session.commit()
 
 
@@ -587,6 +675,32 @@ def _send_reset_email(to_email: str, reset_link: str) -> bool:
         return True
     except Exception as e:
         print(f"[RESET] Error enviando email: {e}. Link: {reset_link}")
+        return False
+
+
+def _send_email_generic(to_email: str, subject: str, body_text: str) -> bool:
+    host = os.getenv("SMTP_HOST")
+    port = int(os.getenv("SMTP_PORT", "0") or 0)
+    user = os.getenv("SMTP_USER")
+    pwd = os.getenv("SMTP_PASS")
+    sender = os.getenv("SMTP_FROM", user or "")
+    if not host or not port or not sender:
+        print(f"[MAIL] SMTP no configurado. To={to_email} | Subject={subject}\n{body_text}")
+        return False
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = sender
+        msg["To"] = to_email
+        msg.set_content(body_text)
+        with smtplib.SMTP(host, port) as server:
+            server.starttls()
+            if user and pwd:
+                server.login(user, pwd)
+            server.send_message(msg)
+        return True
+    except Exception as e:
+        print(f"[MAIL] Error enviando email: {e}")
         return False
 
 
@@ -853,14 +967,47 @@ async def usuarios_logout(authorization: Optional[str] = Header(None)):
         return Response(status=status.HTTP_200_OK, body={"mensaje": "Sesión cerrada correctamente"})
 
 @app.get("/api/usuarios/me/puntos", tags=["Usuarios"], response_model=Response)
-async def usuarios_get_puntos():
-    """Diagrama 17: Consultar puntos de lealtad"""
-    user_id = 1 
-    print(f"Consultando puntos para usuario: {user_id}")
-    return Response(
-        status=status.HTTP_200_OK,
-        body={"usuarioId": user_id, "puntos": 150}
-    )
+async def usuarios_get_puntos(authorization: Optional[str] = Header(None)):
+    """Consultar puntos de lealtad reales acumulados."""
+    email = extraer_email_del_header(authorization)
+    if not email:
+        return Response(status=status.HTTP_401_UNAUTHORIZED, body={"error": "Autenticación requerida"})
+    with Session(engine) as session:
+        pts = session.exec(select(LoyaltyPoint).where(LoyaltyPoint.user_email == email)).all()
+        total = sum([int(p.puntos) for p in pts]) if pts else 0
+    return Response(status=status.HTTP_200_OK, body={"email": email, "puntos": total})
+
+@app.post("/api/usuarios/me/puntos/canjear", tags=["Usuarios"], response_model=Response)
+async def usuarios_canjear_puntos(authorization: Optional[str] = Header(None), monto: Optional[int] = Body(default=None)):
+    """Previsualizar canje de puntos sobre el carrito actual.
+    Regla: 1 punto = $100 CLP de descuento. Se puede canjear hasta el total del carrito.
+    Si 'monto' no se especifica, intenta canjear el máximo posible.
+    """
+    email = extraer_email_del_header(authorization)
+    if not email:
+        return Response(status=status.HTTP_401_UNAUTHORIZED, body={"error": "Autenticación requerida"})
+    with Session(engine) as session:
+        pts = session.exec(select(LoyaltyPoint).where(LoyaltyPoint.user_email == email)).all()
+        total_pts = sum([int(p.puntos) for p in pts]) if pts else 0
+        items = session.exec(select(CartItem).where(CartItem.user_email == email)).all()
+        subtotal = sum([float(it.price) * int(it.quantity) for it in items])
+        valor_punto = 100.0
+        max_descuento = total_pts * valor_punto
+        if monto is None:
+            descuento = min(max_descuento, subtotal)
+            puntos_usados = int(descuento // valor_punto)
+        else:
+            puntos_usados = max(0, min(int(monto), int(max_descuento // valor_punto)))
+            descuento = min(puntos_usados * valor_punto, subtotal)
+        total_nuevo = max(0.0, subtotal - descuento)
+        return Response(status=status.HTTP_200_OK, body={
+            "puntos_disponibles": total_pts,
+            "puntos_usados": puntos_usados,
+            "valor_punto": valor_punto,
+            "subtotal": subtotal,
+            "descuento": descuento,
+            "total_nuevo": total_nuevo
+        })
 
 # --- Endpoints: Productos (/api/productos) ---
 
@@ -1001,7 +1148,7 @@ async def carrito_add_item(input: CarritoItemInput = Body(...), authorization: O
 
 
 @app.put("/api/carrito/items/{id}", tags=["Carrito"], response_model=Response)
-async def carrito_update_item(id: int = Path(...), input: CarritoItemInput = Body(...), authorization: Optional[str] = Header(None)):
+async def carrito_update_item(id: int = Path(...), input: CarritoUpdateInput = Body(...), authorization: Optional[str] = Header(None)):
     """Actualizar cantidad de un item del carrito (solo propietario autenticado)."""
     user_email = extraer_email_del_header(authorization)
     if not user_email:
@@ -1014,14 +1161,22 @@ async def carrito_update_item(id: int = Path(...), input: CarritoItemInput = Bod
         if item.user_email != user_email:
             return Response(status=status.HTTP_403_FORBIDDEN, body={"error": "No autorizado"})
 
+        # Normalizar cantidad
+        try:
+            qty = int(input.cantidad)
+            if qty < 1:
+                qty = 1
+        except Exception:
+            return Response(status=status.HTTP_400_BAD_REQUEST, body={"error": "Cantidad inválida"})
+
         # Validar stock si se proporciona productoId o usar el product_id actual
-        prod_id = input.productoId if getattr(input, 'productoId', None) else item.product_id
+        prod_id = input.productoId if input.productoId is not None else item.product_id
         product = session.get(Product, prod_id) if prod_id else None
-        if product and input.cantidad > product.stock:
+        if product and qty > product.stock:
             return Response(status=status.HTTP_400_BAD_REQUEST, body={"error": "Stock insuficiente"})
 
-        item.quantity = input.cantidad
-        if getattr(input, 'productoId', None):
+        item.quantity = qty
+        if input.productoId is not None:
             item.product_id = input.productoId
         session.add(item)
         session.commit()
@@ -1037,21 +1192,44 @@ async def carrito_update_item(id: int = Path(...), input: CarritoItemInput = Bod
         })
 
 @app.post("/api/carrito/aplicar-cupon", tags=["Carrito"], response_model=Response)
-async def carrito_aplicar_cupon(input: CuponInput = Body(...)):
-    """Diagrama 18: Aplicar cupón de descuento"""
-    print(f"Aplicando cupón: {input.codigo}")
-    if input.codigo.upper() == "NATURAL10":
-        carrito_actualizado = {
-            "id": 1, "total_anterior": 10000, "descuento": 1000, "total_nuevo": 9000
+async def carrito_aplicar_cupon(input: CuponInput = Body(...), authorization: Optional[str] = Header(None)):
+    """Aplicar cupón: valida en BD y calcula total del carrito del usuario."""
+    code = input.codigo.strip().upper()
+    email = extraer_email_del_header(authorization)
+    with Session(engine) as session:
+        cup = session.exec(select(Coupon).where(Coupon.codigo == code, Coupon.activo == True)).first()
+        if not cup:
+            return Response(status=status.HTTP_404_NOT_FOUND, body={"error": "Cupón no válido"})
+        now = datetime.now(timezone.utc)
+        if cup.expira and cup.expira < now:
+            return Response(status=status.HTTP_400_BAD_REQUEST, body={"error": "Cupón expirado"})
+        if cup.max_uses and cup.used_count >= cup.max_uses:
+            return Response(status=status.HTTP_400_BAD_REQUEST, body={"error": "Cupón agotado"})
+
+        # Calcular subtotal del carrito para el usuario (o genérico 0 si no auth)
+        subtotal = 0.0
+        if email:
+            items = session.exec(select(CartItem).where(CartItem.user_email == email)).all()
+            subtotal = sum([float(it.price) * int(it.quantity) for it in items])
+        else:
+            subtotal = 0.0
+
+        # Calcular descuento
+        descuento = 0.0
+        if cup.descuento_porcentaje:
+            descuento += (subtotal * float(cup.descuento_porcentaje) / 100.0)
+        if cup.descuento_fijo:
+            descuento += float(cup.descuento_fijo)
+        descuento = min(descuento, subtotal)
+        total_nuevo = subtotal - descuento
+
+        preview = {
+            "codigo": code,
+            "total_anterior": float(subtotal),
+            "descuento": float(descuento),
+            "total_nuevo": float(total_nuevo)
         }
-        return Response(
-            status=status.HTTP_200_OK,
-            body=carrito_actualizado
-        )
-    return Response(
-        status=status.HTTP_404_NOT_FOUND,
-        body={"error": "Cupón no válido o expirado"}
-    )
+        return Response(status=status.HTTP_200_OK, body=preview)
 
 
 @app.get("/api/carrito", tags=["Carrito"], response_model=Response)
@@ -1178,6 +1356,9 @@ class PedidoInput(BaseModel):
     address: Optional[str] = None
     city: Optional[str] = None
     phone: Optional[str] = None
+    coupon_code: Optional[str] = None
+    items: Optional[List[Dict[str, Any]]] = None
+    redeem_points: Optional[bool] = False
 
 class ResetPasswordInput(BaseModel):
     token: str
@@ -1185,7 +1366,7 @@ class ResetPasswordInput(BaseModel):
 
 
 @app.post("/api/pedidos", tags=["Pedidos"], response_model=Response)
-async def crear_pedido(input: PedidoInput = Body(...), authorization: Optional[str] = Header(None)):
+async def crear_pedido(input: PedidoInput = Body(...), authorization: Optional[str] = Header(None), background_tasks: BackgroundTasks = None):
     """Crear un pedido a partir del carrito del usuario autenticado.
     - Prioriza el email del token. Si no hay token, usa input.email.
     - Campos del input son opcionales para evitar 422 si la UI no los envía.
@@ -1199,11 +1380,62 @@ async def crear_pedido(input: PedidoInput = Body(...), authorization: Optional[s
         with Session(engine) as session:
             items = session.exec(select(CartItem).where(CartItem.user_email == user_email)).all()
             print(f"[PEDIDO] Crear pedido para {user_email} - items={len(items) if items else 0}")
+            # Fallback: si no hay items en servidor y vienen en input.items, usarlos
+            if (not items or len(items) == 0) and input and input.items:
+                items = []
+                for it in input.items:
+                    try:
+                        pid = int(it.get('product_id') or it.get('id') or 0)
+                    except Exception:
+                        pid = 0
+                    qty = int(it.get('quantity') or 1)
+                    name = it.get('name') or 'Producto'
+                    price = float(it.get('price') or 0)
+                    desc = it.get('description') or ''
+                    img = it.get('image') or '/static/imagenes/jugo_tropical.png'
+                    # Si es personalizado (pid <= 0), marcar product_id -1
+                    if pid <= 0:
+                        pid = -1
+                    ci = CartItem(user_email=user_email, product_id=pid, name=name, price=price, image=img, description=desc, quantity=qty)
+                    session.add(ci)
+                    session.commit()
+                    session.refresh(ci)
+                    items.append(ci)
+                print(f"[PEDIDO] Fallback items desde input: {len(items)}")
             if not items:
                 return Response(status=status.HTTP_400_BAD_REQUEST, body={"error": "Carrito vacío"})
 
-            total = sum([float(it.price) * int(it.quantity) for it in items])
-            order = Order(user_email=user_email, total=total)
+            subtotal = sum([float(it.price) * int(it.quantity) for it in items])
+
+            # Aplicar cupón si corresponde
+            discount_total = 0.0
+            applied_code = None
+            if input.coupon_code:
+                code = input.coupon_code.strip().upper()
+                cup = session.exec(select(Coupon).where(Coupon.codigo == code, Coupon.activo == True)).first()
+                if cup and (not cup.expira or cup.expira >= datetime.now(timezone.utc)) and (not cup.max_uses or cup.used_count < cup.max_uses):
+                    if cup.descuento_porcentaje:
+                        discount_total += (subtotal * float(cup.descuento_porcentaje) / 100.0)
+                    if cup.descuento_fijo:
+                        discount_total += float(cup.descuento_fijo)
+                    discount_total = min(discount_total, subtotal)
+                    applied_code = code
+
+            # Aplicar canje de puntos si se solicita
+            puntos_descuento = 0.0
+            puntos_usados = 0
+            if input.redeem_points:
+                pts = session.exec(select(LoyaltyPoint).where(LoyaltyPoint.user_email == user_email)).all()
+                total_pts = sum([int(p.puntos) for p in pts]) if pts else 0
+                valor_punto = 100.0
+                max_descuento = total_pts * valor_punto
+                # No exceder subtotal - descuento por cupón
+                to_reduce_cap = max(0.0, subtotal - discount_total)
+                puntos_descuento = min(max_descuento, to_reduce_cap)
+                puntos_usados = int(puntos_descuento // valor_punto)
+
+            total = max(0.0, subtotal - discount_total - puntos_descuento)
+            order = Order(user_email=user_email, total=total, discount_total=discount_total, coupon_code=applied_code, status="Creado")
             session.add(order)
             session.commit()
             session.refresh(order)
@@ -1221,11 +1453,39 @@ async def crear_pedido(input: PedidoInput = Body(...), authorization: Optional[s
             for it in items:
                 session.delete(it)
 
+            # Registrar canje de cupón y aumentar uso
+            if applied_code:
+                cup = session.exec(select(Coupon).where(Coupon.codigo == applied_code)).first()
+                if cup:
+                    cup.used_count = int(cup.used_count or 0) + 1
+                    session.add(cup)
+                red = CouponRedemption(codigo=applied_code, user_email=user_email, order_id=order.id)
+                session.add(red)
+
+            # Acumular puntos: 1 punto por cada $1000 del total
+            points = int(total // 1000)
+            if points > 0:
+                lp = LoyaltyPoint(user_email=user_email, puntos=points, motivo="Compra", pedido_id=order.id)
+                session.add(lp)
+                order.points_earned = points
+                session.add(order)
+
+            # Registrar canje de puntos (negativo) si se usaron
+            if input.redeem_points and puntos_usados > 0:
+                lp_canje = LoyaltyPoint(user_email=user_email, puntos=-puntos_usados, motivo="Canje", pedido_id=order.id)
+                session.add(lp_canje)
+
             session.commit()
 
             # Preparar respuesta segura (serializable)
-            body = {"id": order.id, "total": float(order.total), "created_at": order.created_at.isoformat()}
+            body = {"id": order.id, "total": float(order.total), "discount_total": float(order.discount_total), "coupon_code": order.coupon_code, "points_earned": order.points_earned, "created_at": order.created_at.isoformat()}
 
+        # Enviar confirmación por email en background (si SMTP configurado)
+        try:
+            if background_tasks and user_email:
+                background_tasks.add_task(_send_email_generic, user_email, "Confirmación de pedido", f"Gracias por tu compra. Pedido #{order.id} por ${order.total:.0f}.")
+        except Exception:
+            pass
         return Response(status=status.HTTP_201_CREATED, body=body)
     except Exception as e:
         print(f"[PEDIDO][ERROR] {e}")
@@ -1259,19 +1519,126 @@ async def obtener_pedidos_usuario(authorization: Optional[str] = Header(None)):
         
         return Response(status=status.HTTP_200_OK, body=result)
 
+
+@app.post("/api/pedidos/{id}/enviar-postcompra", tags=["Pedidos"], response_model=Response)
+async def enviar_email_post_compra(id: int = Path(..., gt=0), authorization: Optional[str] = Header(None), background_tasks: BackgroundTasks = None):
+    """Envía un email de seguimiento post-compra al usuario del pedido."""
+    email = extraer_email_del_header(authorization)
+    with Session(engine) as session:
+        order = session.get(Order, id)
+        if not order:
+            return Response(status=status.HTTP_404_NOT_FOUND, body={"error": "Pedido no encontrado"})
+        target_email = order.user_email or email
+    sent = False
+    if background_tasks and target_email:
+        background_tasks.add_task(_send_email_generic, target_email, "¿Cómo estuvo tu compra?", f"Gracias por elegir Natural Power. Tu pedido #{id} ya está completado. Cuéntanos tu experiencia respondiendo este mensaje.")
+        sent = True
+    return Response(status=status.HTTP_200_OK, body={"ok": True, "email_enviado": sent})
+
 # --- Endpoints: Documentos (/api/boletas) ---
 
+def _ensure_boletas_dir() -> str:
+    d = os.path.join(static_dir, "boletas")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        pass
+    return d
+
+
+def _generate_invoice_html(order: Order, items: List[OrderItem]) -> str:
+    rows = "".join([
+        f"<tr><td>{i.quantity}x</td><td>{i.name}</td><td style='text-align:right'>$ {i.price:,.0f}</td><td style='text-align:right'>$ {i.price*i.quantity:,.0f}</td></tr>" for i in items
+    ])
+    html = f"""
+<!DOCTYPE html><html lang=es><head><meta charset=utf-8><title>Boleta B-{order.id}</title>
+<style>body{{font-family:Arial,Helvetica,sans-serif;margin:24px}}table{{width:100%;border-collapse:collapse}}td,th{{padding:6px;border-bottom:1px solid #ddd}}</style>
+</head><body>
+<h2>Natural Power - Boleta</h2>
+<p>Número: <strong>B-{order.id}</strong><br>Fecha: {order.created_at.strftime('%Y-%m-%d %H:%M')}</p>
+<table><thead><tr><th>Cant</th><th>Descripción</th><th>Precio</th><th>Total</th></tr></thead><tbody>{rows}</tbody></table>
+<p style='text-align:right;margin-top:12px'>Descuento: $ {order.discount_total:,.0f}</p>
+<h3 style='text-align:right'>TOTAL: $ {order.total:,.0f}</h3>
+</body></html>
+"""
+    return html
+
+
+def _generate_invoice_pdf(order: Order, items: List[OrderItem]) -> Optional[str]:
+    if not REPORTLAB_AVAILABLE:
+        return None
+    folder = _ensure_boletas_dir()
+    path = os.path.join(folder, f"B-{order.id}.pdf")
+    c = canvas.Canvas(path, pagesize=A4)
+    width, height = A4
+    y = height - 50
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(50, y, "Natural Power - Boleta")
+    y -= 24
+    c.setFont("Helvetica", 12)
+    c.drawString(50, y, f"Número: B-{order.id}")
+    y -= 18
+    c.drawString(50, y, f"Fecha: {order.created_at.strftime('%Y-%m-%d %H:%M')}")
+    y -= 28
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(50, y, "Items")
+    y -= 18
+    c.setFont("Helvetica", 11)
+    for it in items:
+        line = f"{it.quantity}x {it.name} - $ {it.price:,.0f}  Total: $ {it.price*it.quantity:,.0f}"
+        c.drawString(50, y, line)
+        y -= 16
+        if y < 100:
+            c.showPage()
+            y = height - 50
+            c.setFont("Helvetica", 11)
+    y -= 10
+    c.setFont("Helvetica", 12)
+    c.drawRightString(width - 50, y, f"Descuento: $ {order.discount_total:,.0f}")
+    y -= 18
+    c.setFont("Helvetica-Bold", 14)
+    c.drawRightString(width - 50, y, f"TOTAL: $ {order.total:,.0f}")
+    c.showPage()
+    c.save()
+    return path
+
+@app.post("/api/boletas/generar", tags=["Documentos"], response_model=Response)
+async def documentos_generar_boleta(input: EnviarBoletaInput = Body(...)):
+    """Genera una boleta HTML y retorna la URL pública."""
+    with Session(engine) as session:
+        order = session.get(Order, int(input.pedidoId))
+        if not order:
+            return Response(status=status.HTTP_404_NOT_FOUND, body={"error": "Pedido no encontrado"})
+        items = session.exec(select(OrderItem).where(OrderItem.order_id == order.id)).all()
+        # Preferir PDF si está disponible
+        pdf_path = _generate_invoice_pdf(order, items)
+        if pdf_path:
+            public_url = f"/static/boletas/B-{order.id}.pdf"
+            return Response(status=status.HTTP_200_OK, body={"pedidoId": order.id, "url": public_url, "tipo": "pdf"})
+        # Fallback a HTML
+        html = _generate_invoice_html(order, items)
+        folder = _ensure_boletas_dir()
+        path = os.path.join(folder, f"B-{order.id}.html")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(html)
+        public_url = f"/static/boletas/B-{order.id}.html"
+        return Response(status=status.HTTP_200_OK, body={"pedidoId": order.id, "url": public_url, "tipo": "html"})
+
+
 @app.post("/api/boletas/enviar-email", tags=["Documentos"], response_model=Response)
-async def documentos_enviar_boleta(input: EnviarBoletaInput = Body(...)):
-    """Diagrama 12: Enviar boleta por email"""
-    print(f"Generando y enviando boleta para Pedido ID {input.pedidoId}")
-    boleta_generada = {
-        "id": 901, "pedidoId": input.pedidoId, "numero": "B-001234", "pdfUrl": "https://storage.azure.com/boletas/B-001234.pdf", "email_enviado": True
-    }
-    return Response(
-        status=status.HTTP_200_OK,
-        body=boleta_generada
-    )
+async def documentos_enviar_boleta(input: EnviarBoletaInput = Body(...), background_tasks: BackgroundTasks = None):
+    """Genera boleta y envía email con el enlace (si SMTP)."""
+    gen = await documentos_generar_boleta(input)
+    body = gen.body if isinstance(gen, Response) else gen.get("body", {})
+    url = body.get("url")
+    with Session(engine) as session:
+        order = session.get(Order, int(input.pedidoId))
+        email = order.user_email if order else None
+    sent = False
+    if background_tasks and email:
+        background_tasks.add_task(_send_email_generic, email, "Tu boleta de compra", f"Gracias por tu compra. Puedes descargar tu boleta aquí: {FRONTEND_BASE_URL}{url}")
+        sent = True
+    return Response(status=status.HTTP_200_OK, body={"pedidoId": input.pedidoId, "url": url, "email_enviado": sent})
 
 # --- Endpoints: Reportes (/api/reportes) ---
 

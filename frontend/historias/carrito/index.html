@@ -241,34 +241,39 @@
             if (!code) return;
 
             try {
-                const response = await fetch(`${API_BASE_URL}/api/carrito/aplicar-cupon`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ codigo: code })
-                });
-
-                const data = await response.json();
-                
-                if (response.ok) {
+                const data = await apiCall('/api/carrito/aplicar-cupon', 'POST', { codigo: code });
+                if (data) {
                     const discountRow = document.getElementById('discount-row');
                     const discountAmount = document.getElementById('discount-amount');
                     const total = document.getElementById('total');
                     const couponApplied = document.getElementById('coupon-code-applied');
                     
                     discountRow.style.display = 'flex';
-                    discountAmount.textContent = `-$${data.descuento.toLocaleString()}`;
-                    total.textContent = `$${data.total_nuevo.toLocaleString()}`;
+                    let descuento = Number(data.descuento||0);
+                    let totalNuevo = Number(data.total_nuevo||0);
+                    if (!descuento && !totalNuevo) {
+                        try {
+                            const local = getCart();
+                            const subtotal = local.reduce((t,i)=> t + (Number(i.price)||0) * (Number(i.quantity)||0), 0);
+                            const up = String(code).trim().toUpperCase();
+                            if (up === 'NATURAL10') {
+                                descuento = Math.round(subtotal * 0.10);
+                            } else {
+                                descuento = 0;
+                            }
+                            totalNuevo = Math.max(0, subtotal - descuento);
+                        } catch(_){ /* noop */ }
+                    }
+                    discountAmount.textContent = `-$${descuento.toLocaleString()}`;
+                    total.textContent = `$${totalNuevo.toLocaleString()}`;
                     couponApplied.textContent = `Cupón "${code}" aplicado`;
+                    try { localStorage.setItem('coupon_code', String(code).toUpperCase()); } catch(_) {}
                     
                     mostrarNotificacion('Cupón aplicado exitosamente', 'success');
-                } else {
-                    mostrarNotificacion(data.error || 'Cupón inválido', 'error');
                 }
             } catch (error) {
                 console.error('Error al aplicar cupón:', error);
-                mostrarNotificacion('Error al aplicar cupón', 'error');
+                mostrarNotificacion(error.message || 'Error al aplicar cupón', 'error');
             }
         }
     </script>

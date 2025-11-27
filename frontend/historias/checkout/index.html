@@ -65,6 +65,11 @@
                         <h5>Método de Pago</h5>
                         <select id="payment-method" class="form-select mb-3"><option value="card">Tarjeta</option><option value="cash">Efectivo</option></select>
                         <div id="payment-details"></div>
+                        <div class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" id="redeem-points" onchange="updatePointsPreview()">
+                            <label class="form-check-label" for="redeem-points">Usar mis puntos disponibles</label>
+                        </div>
+                        <div id="points-preview" class="small text-muted mt-1"></div>
                     </div>
                 </div>
             </div>
@@ -155,6 +160,8 @@
             `;
 
             summaryDiv.innerHTML = summaryHtml;
+            // Actualizar preview de puntos si está marcado
+            updatePointsPreview();
         }
 
         function setupPaymentMethodChange() {
@@ -208,11 +215,46 @@
                     cartItems = serverItems;
                     return true;
                 }
+                // Si no hay carrito en servidor pero sí en local, permitir continuar
+                if (cartItems && cartItems.length) {
+                    return true;
+                }
                 return false;
             } catch (error) {
                 console.error('No se pudo verificar el carrito en el servidor', error);
+                // Permitir continuar si hay items locales
+                if (cartItems && cartItems.length) return true;
                 return false;
             }
+        }
+
+        async function syncLocalToServer(){
+            try {
+                const token = localStorage.getItem('auth_token');
+                if (!token) return false;
+                // Obtener items del servidor
+                let serverItems = await Cart.getItems();
+                if (serverItems && serverItems.length > 0) return true;
+                // Subir locales
+                if (cartItems && cartItems.length){
+                    for (const it of cartItems){
+                        try {
+                            const qty = it.quantity || 1;
+                            // Si es personalizado (id string), usar productoId -1 con personalización y precio
+                            if (typeof it.id === 'string' && it.id.startsWith('custom')) {
+                                await Cart.addItem(-1, qty, { personalizacion: { customName: it.name || 'Jugo Personalizado', customDescription: it.description || '', customPrice: Number(it.price)||0 } });
+                            } else {
+                                const pid = (typeof it.id === 'number' ? it.id : (typeof it.product_id === 'number' ? it.product_id : 0));
+                                if (pid > 0) {
+                                    await Cart.addItem(pid, qty);
+                                }
+                            }
+                        } catch(_){ }
+                    }
+                }
+                serverItems = await Cart.getItems();
+                return (serverItems && serverItems.length > 0);
+            } catch(_){ return false; }
         }
 
         async function payWithMercadoPago() {
@@ -243,7 +285,8 @@
                     currency_id: 'CLP'
                 }));
 
-                const pref = await apiCall('/api/pagos/crear-preferencia', 'POST', { items, metadata: { address, city, phone } });
+                const coupon = (localStorage.getItem('coupon_code')||'').toUpperCase() || undefined;
+                const pref = await apiCall('/api/pagos/crear-preferencia', 'POST', { items, metadata: { address, city, phone, coupon_code: coupon } });
                 if (pref && pref.init_point) {
                     window.location.href = pref.init_point;
                 } else {
@@ -255,6 +298,27 @@
                 mostrarNotificacion(msg, 'error');
             } finally {
                 if (btn){ btn.disabled = false; btn.textContent = 'Pagar con MercadoPago'; }
+            }
+        }
+
+        async function updatePointsPreview(){
+            try{
+                const checkbox = document.getElementById('redeem-points');
+                const div = document.getElementById('points-preview');
+                if (!checkbox || !div) return;
+                if (!checkbox.checked){ div.textContent = ''; return; }
+                // Consultar preview al backend
+                const preview = await apiCall('/api/usuarios/me/puntos/canjear', 'POST', { monto: null });
+                if (preview && typeof preview.total_nuevo === 'number'){
+                    const d = Math.round(preview.descuento||0);
+                    const p = preview.puntos_usados||0;
+                    div.textContent = `Se aplicarán ${p} puntos (-$${d.toLocaleString()}).`;
+                } else {
+                    div.textContent = 'No se pudo calcular canje de puntos.';
+                }
+            }catch(e){
+                const div = document.getElementById('points-preview');
+                if (div) div.textContent = 'No disponible';
             }
         }
 
@@ -282,8 +346,26 @@
                 if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Procesando pago...'; }
                 // Simulación: pago aprobado
                 await new Promise(r=>setTimeout(r, 1200));
+                // Asegurar carrito en servidor
+                await syncLocalToServer();
                 // Crear pedido para registrar la compra
-                const pedido = await apiCall('/api/pedidos', 'POST', { name, email, address, city });
+                const coupon = (localStorage.getItem('coupon_code')||'').toUpperCase() || undefined;
+                const pedido = await apiCall('/api/pedidos', 'POST', { name, email, address, city, coupon_code: coupon, items: cartItems });
+                // si el usuario quiere usar puntos, repetir con flag (el backend ya limpia carrito; por eso primero enviamos flag correctamente)
+                const usePoints = !!document.getElementById('redeem-points')?.checked;
+                if (usePoints){
+                    // crear pedido con canje de puntos (asegurar items en servidor primero)
+                    await syncLocalToServer();
+                    const pedidoPts = await apiCall('/api/pedidos', 'POST', { name, email, address, city, coupon_code: coupon, items: cartItems, redeem_points: true });
+                    if (pedidoPts && pedidoPts.id){
+                        mostrarNotificacion('Pago aprobado. Pedido con puntos creado.', 'success');
+                        cartItems = [];
+                        try { saveCart([]); } catch(_){ }
+                        Cart.updateCartBadge();
+                        setTimeout(()=>{ window.location.href = '/app/cuenta/?pago=ok'; }, 800);
+                        return;
+                    }
+                }
                 if (pedido && pedido.id){
                     mostrarNotificacion('Pago aprobado. Pedido creado con éxito.', 'success');
                     cartItems = [];
@@ -319,7 +401,23 @@
             const btn = document.getElementById('checkout-cta');
             try{
                 if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Creando pedido...'; }
-                const pedido = await apiCall('/api/pedidos', 'POST', { name, email, address, city });
+                // Asegurar carrito en servidor antes de crear pedido
+                await syncLocalToServer();
+                const coupon = (localStorage.getItem('coupon_code')||'').toUpperCase() || undefined;
+                const pedido = await apiCall('/api/pedidos', 'POST', { name, email, address, city, coupon_code: coupon, items: cartItems });
+                const usePoints = !!document.getElementById('redeem-points')?.checked;
+                if (usePoints){
+                    await syncLocalToServer();
+                    const pedidoPts = await apiCall('/api/pedidos', 'POST', { name, email, address, city, coupon_code: coupon, items: cartItems, redeem_points: true });
+                    if (pedidoPts && pedidoPts.id){
+                        mostrarNotificacion('Pedido creado con puntos. Pagarás al recibir.', 'success');
+                        cartItems = [];
+                        try { saveCart([]); } catch(_){ }
+                        Cart.updateCartBadge();
+                        setTimeout(()=>{ window.location.href = '/app/cuenta/'; }, 1000);
+                        return;
+                    }
+                }
                 if (pedido && pedido.id){
                     mostrarNotificacion('Pedido creado con éxito. Pagarás al recibir.', 'success');
                     // Limpiar carrito local por si acaso

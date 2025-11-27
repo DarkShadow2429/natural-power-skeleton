@@ -16,8 +16,9 @@ async function handleLogin(event) {
     event.preventDefault();
     
     const form = event.target;
-    const email = form.elements['email'].value;
-    const contrasena = form.elements['contrasena'].value;
+    const email = form.elements['email'] ? form.elements['email'].value : '';
+    // Aceptar tanto 'contrasena' como 'password'
+    const contrasena = form.elements['contrasena'] ? form.elements['contrasena'].value : (form.elements['password'] ? form.elements['password'].value : '');
     
     const result = await login(email, contrasena);
     if (result) {
@@ -38,10 +39,13 @@ async function handleRegister(event) {
     event.preventDefault();
     
     const form = event.target;
-    const nombre = form.elements['nombre'].value;
-    const email = form.elements['email'].value;
-    const contrasena = form.elements['contrasena'].value;
-    const direccion = form.elements['direccion'].value;
+    // Aceptar tanto 'nombre' como 'name'
+    const nombre = form.elements['nombre'] ? form.elements['nombre'].value : (form.elements['name'] ? form.elements['name'].value : '');
+    const email = form.elements['email'] ? form.elements['email'].value : '';
+    // Aceptar tanto 'contrasena' como 'password'
+    const contrasena = form.elements['contrasena'] ? form.elements['contrasena'].value : (form.elements['password'] ? form.elements['password'].value : '');
+    // Aceptar tanto 'direccion' como 'address'
+    const direccion = form.elements['direccion'] ? form.elements['direccion'].value : (form.elements['address'] ? form.elements['address'].value : '');
     
     const result = await registrar(nombre, email, contrasena, direccion);
     if (result) {

@@ -378,6 +378,10 @@ class CarritoItemInput(BaseModel):
     cantidad: int
     personalizacion: Optional[Dict[str, Any]] = None
 
+class CarritoUpdateInput(BaseModel):
+    cantidad: int
+    productoId: Optional[int] = None
+
 class CuponInput(BaseModel):
     codigo: str
 
@@ -853,14 +857,47 @@ async def usuarios_logout(authorization: Optional[str] = Header(None)):
         return Response(status=status.HTTP_200_OK, body={"mensaje": "Sesión cerrada correctamente"})
 
 @app.get("/api/usuarios/me/puntos", tags=["Usuarios"], response_model=Response)
-async def usuarios_get_puntos():
-    """Diagrama 17: Consultar puntos de lealtad"""
-    user_id = 1 
-    print(f"Consultando puntos para usuario: {user_id}")
-    return Response(
-        status=status.HTTP_200_OK,
-        body={"usuarioId": user_id, "puntos": 150}
-    )
+async def usuarios_get_puntos(authorization: Optional[str] = Header(None)):
+    """Consultar puntos de lealtad reales acumulados."""
+    email = extraer_email_del_header(authorization)
+    if not email:
+        return Response(status=status.HTTP_401_UNAUTHORIZED, body={"error": "Autenticación requerida"})
+    with Session(engine) as session:
+        pts = session.exec(select(LoyaltyPoint).where(LoyaltyPoint.user_email == email)).all()
+        total = sum([int(p.puntos) for p in pts]) if pts else 0
+    return Response(status=status.HTTP_200_OK, body={"email": email, "puntos": total})
+
+@app.post("/api/usuarios/me/puntos/canjear", tags=["Usuarios"], response_model=Response)
+async def usuarios_canjear_puntos(authorization: Optional[str] = Header(None), monto: Optional[int] = Body(default=None)):
+    """Previsualizar canje de puntos sobre el carrito actual.
+    Regla: 1 punto = $100 CLP de descuento. Se puede canjear hasta el total del carrito.
+    Si 'monto' no se especifica, intenta canjear el máximo posible.
+    """
+    email = extraer_email_del_header(authorization)
+    if not email:
+        return Response(status=status.HTTP_401_UNAUTHORIZED, body={"error": "Autenticación requerida"})
+    with Session(engine) as session:
+        pts = session.exec(select(LoyaltyPoint).where(LoyaltyPoint.user_email == email)).all()
+        total_pts = sum([int(p.puntos) for p in pts]) if pts else 0
+        items = session.exec(select(CartItem).where(CartItem.user_email == email)).all()
+        subtotal = sum([float(it.price) * int(it.quantity) for it in items])
+        valor_punto = 100.0
+        max_descuento = total_pts * valor_punto
+        if monto is None:
+            descuento = min(max_descuento, subtotal)
+            puntos_usados = int(descuento // valor_punto)
+        else:
+            puntos_usados = max(0, min(int(monto), int(max_descuento // valor_punto)))
+            descuento = min(puntos_usados * valor_punto, subtotal)
+        total_nuevo = max(0.0, subtotal - descuento)
+        return Response(status=status.HTTP_200_OK, body={
+            "puntos_disponibles": total_pts,
+            "puntos_usados": puntos_usados,
+            "valor_punto": valor_punto,
+            "subtotal": subtotal,
+            "descuento": descuento,
+            "total_nuevo": total_nuevo
+        })
 
 # --- Endpoints: Productos (/api/productos) ---
 
@@ -1001,7 +1038,7 @@ async def carrito_add_item(input: CarritoItemInput = Body(...), authorization: O
 
 
 @app.put("/api/carrito/items/{id}", tags=["Carrito"], response_model=Response)
-async def carrito_update_item(id: int = Path(...), input: CarritoItemInput = Body(...), authorization: Optional[str] = Header(None)):
+async def carrito_update_item(id: int = Path(...), input: CarritoUpdateInput = Body(...), authorization: Optional[str] = Header(None)):
     """Actualizar cantidad de un item del carrito (solo propietario autenticado)."""
     user_email = extraer_email_del_header(authorization)
     if not user_email:
@@ -1014,14 +1051,22 @@ async def carrito_update_item(id: int = Path(...), input: CarritoItemInput = Bod
         if item.user_email != user_email:
             return Response(status=status.HTTP_403_FORBIDDEN, body={"error": "No autorizado"})
 
+        # Normalizar cantidad
+        try:
+            qty = int(input.cantidad)
+            if qty < 1:
+                qty = 1
+        except Exception:
+            return Response(status=status.HTTP_400_BAD_REQUEST, body={"error": "Cantidad inválida"})
+
         # Validar stock si se proporciona productoId o usar el product_id actual
-        prod_id = input.productoId if getattr(input, 'productoId', None) else item.product_id
+        prod_id = input.productoId if input.productoId is not None else item.product_id
         product = session.get(Product, prod_id) if prod_id else None
-        if product and input.cantidad > product.stock:
+        if product and qty > product.stock:
             return Response(status=status.HTTP_400_BAD_REQUEST, body={"error": "Stock insuficiente"})
 
-        item.quantity = input.cantidad
-        if getattr(input, 'productoId', None):
+        item.quantity = qty
+        if input.productoId is not None:
             item.product_id = input.productoId
         session.add(item)
         session.commit()

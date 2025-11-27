@@ -127,6 +127,12 @@
                         <p class="text-muted">Cargando sesiones...</p>
                     </div>
                 </div>
+                <div class="card mt-3">
+                    <div class="card-header bg-warning text-dark"><h5 class="mb-0"><i class="bi bi-star-fill me-2"></i>Mis Puntos</h5></div>
+                    <div class="card-body" id="points-container">
+                        <p class="text-muted">Cargando puntos...</p>
+                    </div>
+                </div>
             </div>
             <div class="col-md-8">
                 <ul class="nav nav-tabs mb-3" id="accountTabs" role="tablist">
@@ -179,7 +185,8 @@
                 loadUserProfile(),
                 loadSessions(),
                 loadActivity(),
-                loadOrders()
+                loadOrders(),
+                loadPoints()
             ]);
         }
 
@@ -285,6 +292,28 @@
             } catch (error) {
                 console.error('Error cargando actividad:', error);
                 document.getElementById('activity-history').innerHTML = '<p class="text-danger">Error al cargar actividad</p>';
+            }
+        }
+
+        async function loadPoints() {
+            try {
+                const token = localStorage.getItem('auth_token');
+                if (!token) { document.getElementById('points-container').innerHTML = '<p class="text-muted">No autenticado</p>'; return; }
+                const response = await fetch(`${API_BASE_URL}/api/usuarios/me/puntos`, { headers: { 'Authorization': `Bearer ${token}` } });
+                const data = await response.json();
+                const total = Number((data.body && data.body.puntos) || 0);
+                document.getElementById('points-container').innerHTML = `
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-trophy text-warning fs-1 me-3"></i>
+                        <div>
+                            <div class="fs-3 fw-bold">${total}</div>
+                            <div class="text-muted">puntos acumulados</div>
+                        </div>
+                    </div>
+                `;
+            } catch (e) {
+                console.error('Error cargando puntos', e);
+                document.getElementById('points-container').innerHTML = '<p class="text-danger">Error al cargar puntos</p>';
             }
         }
 
